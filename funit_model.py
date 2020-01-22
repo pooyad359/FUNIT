@@ -23,10 +23,16 @@ class FUNITModel(nn.Module):
         self.gen_test = copy.deepcopy(self.gen)
 
     def forward(self, co_data, cl_data, hp, mode):
-        xa = co_data[0].cuda()
-        la = co_data[1].cuda()
-        xb = cl_data[0].cuda()
-        lb = cl_data[1].cuda()
+        if torch.cuda.is_available():
+            xa = co_data[0].cuda()
+            la = co_data[1].cuda()
+            xb = cl_data[0].cuda()
+            lb = cl_data[1].cuda()
+        else:
+            xa = co_data[0]
+            la = co_data[1]
+            xb = cl_data[0]
+            lb = cl_data[1]
         if mode == 'gen_update':
             c_xa = self.gen.enc_content(xa)
             s_xa = self.gen.enc_class_model(xa)
@@ -74,8 +80,12 @@ class FUNITModel(nn.Module):
         self.eval()
         self.gen.eval()
         self.gen_test.eval()
-        xa = co_data[0].cuda()
-        xb = cl_data[0].cuda()
+        if torch.cuda.is_available():
+            xa = co_data[0].cuda()
+            xb = cl_data[0].cuda()
+        else:
+            xa = co_data[0]
+            xb = cl_data[0]
         c_xa_current = self.gen.enc_content(xa)
         s_xa_current = self.gen.enc_class_model(xa)
         s_xb_current = self.gen.enc_class_model(xb)
@@ -91,8 +101,12 @@ class FUNITModel(nn.Module):
 
     def translate_k_shot(self, co_data, cl_data, k):
         self.eval()
-        xa = co_data[0].cuda()
-        xb = cl_data[0].cuda()
+        if torch.cuda.is_available():
+            xa = co_data[0].cuda()
+            xb = cl_data[0].cuda()
+        else:
+            xa = co_data[0]
+            xb = cl_data[0]
         c_xa_current = self.gen_test.enc_content(xa)
         if k == 1:
             c_xa_current = self.gen_test.enc_content(xa)
@@ -111,7 +125,10 @@ class FUNITModel(nn.Module):
 
     def compute_k_style(self, style_batch, k):
         self.eval()
-        style_batch = style_batch.cuda()
+        if torch.cuda.is_available():
+            style_batch = style_batch.cuda()
+        
+
         s_xb_before = self.gen_test.enc_class_model(style_batch)
         s_xb_after = s_xb_before.squeeze(-1).permute(1, 2, 0)
         s_xb_pool = torch.nn.functional.avg_pool1d(s_xb_after, k)
@@ -120,8 +137,12 @@ class FUNITModel(nn.Module):
 
     def translate_simple(self, content_image, class_code):
         self.eval()
-        xa = content_image.cuda()
-        s_xb_current = class_code.cuda()
+        if torch.cuda.is_available():
+            xa = content_image.cuda()
+            s_xb_current = class_code.cuda()
+        else:
+            xa = content_image
+            s_xb_current = class_code
         c_xa_current = self.gen_test.enc_content(xa)
         xt_current = self.gen_test.decode(c_xa_current, s_xb_current)
         return xt_current
