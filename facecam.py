@@ -14,15 +14,26 @@ import pdb
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument('--embedding','-e',type=str,default=None,help='path to pickle file for target style.')
-parser.add_argument('--class-folder','-cf',type=str,default=None,help='Path to the folder containing class images.')
-# TODO
-# add camera index
-# add rotated mode
-# add aspect ratio adjustment
+parser.add_argument('--embeddings','-e', type = str, default = None,
+                    help ='path to folder containing ".pk" file for classes.')
+parser.add_argument('--camera','-c', type = int, default = 0,
+                    help ='Index of camera to be used.')
+parser.add_argument('--xwin','-x', type = int, default = 0 , 
+                    help = 'x coordinate of window.')
+parser.add_argument('--ywin','-y', type = int, default = 0 , 
+                    help = 'y coordinate of window.')
+parser.add_argument('--full-screen','-fs', type = int, default = 1, 
+                    help = 'when is set to "1", makes the window full screen ')
+parser.add_argument('--cut-off','-co', type = float, default = 0,
+                    help = '''ratio of width or height to be cut off (to adjust aspect ratio). 
+                    Positive values for width cut-off and negative values for height cut-off.''')
+parser.add_argument('--rotated','-r', type = int, default = 0,
+                    help = 'Adjusts the frame for a rotated screen.')
+parser.add_argument('--timer','-t', type = float, default=None,
+                    help = 'Adds a timer to switch between classes.')
+
 
 INPUT_SIZE = 128
-
 config = get_config('configs/funit_animals.yaml')
 config['batch_size'] = 1
 print('\033[32m'+'\t* Configuring the model\033[0m')
@@ -37,20 +48,25 @@ transform = transforms.Compose(transform_list)
 face_detector = cv2.CascadeClassifier('./files/haar_cascade_face.xml')
 
 
-def main(embedding):
-    vs = VideoStream(src = 0, resolution= (1280,960),framerate=32).start()
+
+def main(embeddings,config):
+    vs = VideoStream(src = config['camera'], resolution= (1280,960),framerate=32).start()
     print('\033[32m'+'\t* Preparing for streaming\033[0m')
     time.sleep(1.0)
-    frame = vs.read()
     mask = create_mask(INPUT_SIZE)
+    emb_idx = 0
+    timer_start = time.perf_counter()
     while True:
         t0 = time.perf_counter() 
         frame = vs.read()
         frame = cv2.flip(frame,1)
+        if config['rotated']:
+            frame = adjust_for_rotation(frame)
+        frame = cut_off(frame,config['cutoff'])
         box = detect_faces(frame)
         if box is not None:
             # extend the size of bounding box
-            box = extend_box(box,frame.shape[:2],0.8)
+            box = extend_box(box,frame.shape[:2],0.5)
             
             # extract subject from image
             face_original = frame[box[0]:box[1],box[2]:box[3],:]
@@ -58,7 +74,7 @@ def main(embedding):
             # pass the subject through the model
             h,w,_ = face_original.shape
             face = Image.fromarray(face_original)
-            face = convert_image(face,embedding)
+            face = convert_image(face,embeddings[emb_idx])
             face = np.array(face)
 
             # applying mask to the output
@@ -73,6 +89,12 @@ def main(embedding):
         if key == ord('q'):
             print('\033[32m'+'\n\t* Process Terminated by user.\033[0m')
             break
+        elapsed_time = time.perf_counter() - timer_start
+        if key == ord('n') or elapsed_time>config['timer']:
+            emb_idx +=1
+            if emb_idx>=len(embeddings):
+                emb_idx = 0
+            timer_start = time.perf_counter()
         print('\033[1m'+f'\t{1/(time.perf_counter()-t0):.2f} fps'+'\033[0m',end='\r',flush=True)
 
 def extract_embedding(path):
@@ -99,7 +121,7 @@ def load_embedding(path):
 
 def create_mask(size):
     mask = np.zeros((size,size),dtype = np.uint8)
-    radius = size//2 - size//20
+    radius = size//2 - size//10
     mask = cv2.circle(mask,(size//2,size//2),radius=radius,color=(255),thickness = -1)
     ksize = size//12 *2 - 1
     mask = cv2.GaussianBlur(mask, (ksize,ksize),size//5)
@@ -148,19 +170,42 @@ def extend_box(box,image_size,extend = 0.5):
     xmax = np.clip(xmax,0,img_w)
     return (ymin, ymax, xmin, xmax)
 
+def cut_off(img,ratio = 0):
+    if ratio>0:
+        margin=int(ratio*img.shape[1])//2
+        img = img[:,margin:-margin,:]
+    elif ratio<0:
+        margin=int(-ratio*img.shape[0])//2
+        img = img[margin:-margin,:,:]
+    return img
 
+def adjust_for_rotation(image):
+    h,w,_ = image.shape
+    aspect_ratio = w/h
+    w_new = int(h/aspect_ratio) 
+    margin = (w-w_new)//2
+    return image[:,margin:-margin,:]
 
 if __name__=='__main__':
     args = parser.parse_args()
+    config={}
+    config['camera'] = args.camera
+    config['rotated'] = args.rotated==1
+    config['cutoff'] = args.cut_off
+    config['timer'] = args.timer
+    print('\033[32m'+'\t* Loading embeddings.'+'\033[32m')
+    path = args.embeddings
+    assert os.path.isdir(path), 'Embedding path entered is not a directory.'
+    file_list = [file for file in os.listdir(path) if file.endswith('.pk')]
+    embeddings = [load_embedding(os.path.join(path,file)) for file in file_list]
 
-    if args.class_folder is not None:
-        embedding = extract_embedding(args.class_folder)
-    elif args.embedding is not None:
-        embedding = load_embedding(args.embedding)
-    else:
-        raise Exception("No embedding info was passed in.")
+    # prepare the window
+    cv2.namedWindow("Output", cv2.WND_PROP_FULLSCREEN)
+    cv2.moveWindow('Output',x=args.xwin,y=args.ywin)
+    if args.full_screen:
+        cv2.setWindowProperty("Output",cv2.WND_PROP_FULLSCREEN,cv2.WINDOW_FULLSCREEN)
 
-    main(embedding)
+    main(embeddings,config)
 
 
 
